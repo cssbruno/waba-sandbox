@@ -18,11 +18,14 @@ import {
   ConversationCategory,
   evaluateMessagingLimit,
   getMessagingSummaryForPhone,
+  listSendEvents,
   registerSend,
 } from "../state/messagingLimits";
 import {
   evaluateMarketingEligibility,
   evaluateMarketingFrequency,
+  listMarketingConversions,
+  listMarketingSends,
   registerMarketingSend,
 } from "../state/marketing";
 import {
@@ -37,7 +40,9 @@ import {
   normalizeTemplateStatus,
   TemplateCategory,
   TemplateComponent,
+  TemplateButton,
   TemplateButtonType,
+  TemplateRejectionReason,
   updateTemplateStatus,
 } from "../state/templates";
 import {
@@ -90,6 +95,23 @@ export const createGraphRouter = (): Router => {
       return Math.min(parsed, max);
     }
     return defaultValue;
+  };
+
+  const parseTimeMs = (value: unknown): number | undefined => {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value < 10_000_000_000 ? value * 1000 : value;
+    }
+    if (typeof value === "string" && value.trim() !== "") {
+      const numeric = Number(value);
+      if (Number.isFinite(numeric)) {
+        return numeric < 10_000_000_000 ? numeric * 1000 : numeric;
+      }
+      const parsedDate = Date.parse(value);
+      if (!Number.isNaN(parsedDate)) {
+        return parsedDate;
+      }
+    }
+    return undefined;
   };
 
   const sanitizeExample = (raw: any): Record<string, unknown> => {
@@ -162,9 +184,7 @@ export const createGraphRouter = (): Router => {
     return undefined;
   };
 
-  const sanitizeButton = (
-    raw: any
-  ): TemplateComponent["buttons"][number] | undefined => {
+  const sanitizeButton = (raw: any): TemplateButton | undefined => {
     if (!raw || typeof raw !== "object") return undefined;
     const buttonType = sanitizeButtonType((raw as any).type);
     const text =
@@ -172,7 +192,7 @@ export const createGraphRouter = (): Router => {
 
     if (!buttonType || !text) return undefined;
 
-    const button: TemplateComponent["buttons"][number] = {
+    const button: TemplateButton = {
       type: buttonType,
       text,
     };
@@ -233,8 +253,8 @@ export const createGraphRouter = (): Router => {
         .map(sanitizeButton)
         .filter(
           (
-            b
-          ): b is NonNullable<ReturnType<typeof sanitizeButton>> => Boolean(b)
+            button: TemplateButton | undefined
+          ): button is TemplateButton => Boolean(button)
         );
       if (buttons.length > 0) {
         component.buttons = buttons;
@@ -382,11 +402,13 @@ export const createGraphRouter = (): Router => {
 
     const slice = templates.slice(start, Math.min(end, start + limit));
     const lastIndex = start + slice.length - 1;
-    const nextCursor =
+    const nextItem =
       lastIndex >= 0 && lastIndex + 1 < end
-        ? templates[lastIndex + 1].id
+        ? templates[lastIndex + 1]
         : undefined;
-    const prevCursor = start > 0 ? templates[start - 1].id : undefined;
+    const prevItem = start > 0 ? templates[start - 1] : undefined;
+    const nextCursor = nextItem ? nextItem.id : undefined;
+    const prevCursor = prevItem ? prevItem.id : undefined;
 
     return {
       slice,
@@ -981,6 +1003,190 @@ export const createGraphRouter = (): Router => {
     });
   });
 
+  // ----- Analytics / insights stubs -----
+
+  router.get("/:id/conversation_analytics", (req: Request, res: Response) => {
+    const { id } = req.params;
+    if (!id) {
+      return res.status(400).json({ error: "id_required" });
+    }
+
+    const now = Date.now();
+    const start = parseTimeMs(req.query.start) ?? now - 24 * 60 * 60 * 1000;
+    const end = parseTimeMs(req.query.end) ?? now;
+
+    if (start > end) {
+      return res.status(400).json({
+        error: "start_after_end",
+        message: "start must be before end",
+      });
+    }
+
+    const phone = getPhoneNumber(id);
+    const phoneIds = phone
+      ? [phone.id]
+      : listPhoneNumbers()
+          .filter((p) => p.wabaId === id)
+          .map((p) => p.id);
+    const entity =
+      phone && phone.wabaId && phone.wabaId !== id
+        ? "phone_number"
+        : phone
+        ? "phone_number"
+        : "whatsapp_business_account";
+
+    const events = phoneIds.flatMap((pid) =>
+      listSendEvents({ phoneId: pid, since: start, until: end })
+    );
+
+    const categoryCounts: Record<ConversationCategory, number> = {
+      MARKETING: 0,
+      UTILITY: 0,
+      AUTHENTICATION: 0,
+      UNKNOWN: 0,
+    };
+    const recipients = new Set<string>();
+    let totalCost = 0;
+
+    for (const event of events) {
+      if (categoryCounts[event.category] === undefined) {
+        categoryCounts.UNKNOWN += 1;
+      } else {
+        categoryCounts[event.category] += 1;
+      }
+      totalCost += event.costUsd;
+      recipients.add(event.to);
+    }
+
+    const responseEntry = {
+      type: "conversation_analytics",
+      entity,
+      phone_number_ids: phoneIds,
+      whatsapp_business_account_id: phone?.wabaId ?? id,
+      start: new Date(start).toISOString(),
+      end: new Date(end).toISOString(),
+      conversations: {
+        total: events.length,
+        by_category: categoryCounts,
+      },
+      unique_recipients: recipients.size,
+      cost: {
+        total_cost_usd: Number(totalCost.toFixed(4)),
+      },
+    };
+
+    return res.json({
+      data: [responseEntry],
+      summary: { total_conversations: events.length },
+      sandbox: {
+        phone_ids: phoneIds,
+        start_ms: start,
+        end_ms: end,
+        entity,
+      },
+    });
+  });
+
+  router.get("/:id/marketing_analytics", (req: Request, res: Response) => {
+    const { id } = req.params;
+    if (!id) {
+      return res.status(400).json({ error: "id_required" });
+    }
+
+    const now = Date.now();
+    const start = parseTimeMs(req.query.start) ?? now - 7 * 24 * 60 * 60 * 1000;
+    const end = parseTimeMs(req.query.end) ?? now;
+
+    if (start > end) {
+      return res.status(400).json({
+        error: "start_after_end",
+        message: "start must be before end",
+      });
+    }
+
+    const phone = getPhoneNumber(id);
+    const phoneIds = phone
+      ? [phone.id]
+      : listPhoneNumbers()
+          .filter((p) => p.wabaId === id)
+          .map((p) => p.id);
+    const entity = phone ? "phone_number" : "whatsapp_business_account";
+
+    const sends = listMarketingSends().filter((send) => {
+      const at = send.scheduledFor ?? send.sendTimestamp;
+      return phoneIds.includes(send.phoneId) && at >= start && at <= end;
+    });
+
+    const sendLookup = new Map(sends.map((s) => [s.id, s]));
+    const conversions = listMarketingConversions().filter((conv) => {
+      if (!conv.sendId) return false;
+      return sendLookup.has(conv.sendId);
+    });
+
+    const sendCategoryCounts: Record<TemplateCategory, number> = {
+      MARKETING: 0,
+      UTILITY: 0,
+      AUTHENTICATION: 0,
+      UNKNOWN: 0,
+    };
+    const conversionCounts: Record<string, number> = {};
+    const uniqueRecipients = new Set<string>();
+
+    for (const send of sends) {
+      sendCategoryCounts[send.category] =
+        (sendCategoryCounts[send.category] ?? 0) + 1;
+      uniqueRecipients.add(send.to);
+    }
+
+    for (const conv of conversions) {
+      conversionCounts[conv.event] = (conversionCounts[conv.event] ?? 0) + 1;
+    }
+
+    const spendEvents = phoneIds.flatMap((pid) =>
+      listSendEvents({ phoneId: pid, since: start, until: end })
+    );
+    const marketingSpend = spendEvents
+      .filter((evt) => evt.category === "MARKETING")
+      .reduce((sum, evt) => sum + evt.costUsd, 0);
+
+    const responseEntry = {
+      type: "marketing_analytics",
+      entity,
+      phone_number_ids: phoneIds,
+      whatsapp_business_account_id: phone?.wabaId ?? id,
+      start: new Date(start).toISOString(),
+      end: new Date(end).toISOString(),
+      sends: {
+        total: sends.length,
+        scheduled: sends.filter((s) => typeof s.scheduledFor === "number")
+          .length,
+        by_category: sendCategoryCounts,
+        unique_recipients: uniqueRecipients.size,
+      },
+      conversions: {
+        total: conversions.length,
+        by_event: conversionCounts,
+      },
+      spend: {
+        estimated_marketing_cost_usd: Number(marketingSpend.toFixed(4)),
+      },
+    };
+
+    return res.json({
+      data: [responseEntry],
+      summary: {
+        total_sends: sends.length,
+        total_conversions: conversions.length,
+      },
+      sandbox: {
+        phone_ids: phoneIds,
+        start_ms: start,
+        end_ms: end,
+        entity,
+      },
+    });
+  });
+
   // POST /<PHONE_ID>/messages – simulate sending, mark-as-read, typing, and apply messaging limits
   router.post("/:id/messages", (req: Request, res: Response) => {
     const { id } = req.params;
@@ -1001,7 +1207,7 @@ export const createGraphRouter = (): Router => {
       return res.json({ success: true });
     }
 
-    const { to, type, template } = body;
+    const { to, type, template, interactive } = body;
 
     // Typing indicators:
     // https://developers.facebook.com/documentation/business-messaging/whatsapp/typing-indicators
@@ -1018,7 +1224,15 @@ export const createGraphRouter = (): Router => {
       return res.status(400).json({ error: "to_required" });
     }
 
-    let category: ConversationCategory = "UNKNOWN";
+    const flowInteractive =
+      type === "interactive" &&
+      interactive &&
+      typeof interactive === "object" &&
+      (interactive as any).type === "flow"
+        ? (interactive as Record<string, unknown>)
+        : undefined;
+
+    let category: ConversationCategory = flowInteractive ? "UTILITY" : "UNKNOWN";
     if (type === "template" && template && typeof template === "object") {
       const tplCategory = (template as any).category;
       if (typeof tplCategory === "string") {
@@ -1051,6 +1265,16 @@ export const createGraphRouter = (): Router => {
           );
 
           if (storedTemplate) {
+            if (storedTemplate.status !== "APPROVED") {
+              return res.status(400).json({
+                error: "template_not_approved",
+                sandbox: {
+                  template_id: storedTemplate.id,
+                  status: storedTemplate.status,
+                  rejection_reason: storedTemplate.rejectionReason ?? null,
+                },
+              });
+            }
             const storedCategory = storedTemplate.category;
             if (
               storedCategory === "MARKETING" ||
@@ -1099,6 +1323,26 @@ export const createGraphRouter = (): Router => {
 
     const messageId = `wamid.SANDBOX-OUT-${Date.now()}`;
 
+    const sandboxDetails: Record<string, unknown> = {
+      cost_usd: registered.event.costUsd,
+      total_cost_usd: registered.state.totalCostUsd,
+      tier: registered.state.tier,
+    };
+
+    if (flowInteractive) {
+      sandboxDetails.flow = {
+        type: "flow",
+        flow_id:
+          (flowInteractive as any).flow_id ??
+          (flowInteractive as any).id ??
+          null,
+        flow_token: (flowInteractive as any).flow_token ?? null,
+        flow_action: (flowInteractive as any).flow_action ?? null,
+        flow_action_payload:
+          (flowInteractive as any).flow_action_payload ?? null,
+      };
+    }
+
     // Graph API success shape for /messages
     return res.status(200).json({
       messages: [
@@ -1106,11 +1350,7 @@ export const createGraphRouter = (): Router => {
           id: messageId,
         },
       ],
-      sandbox: {
-        cost_usd: registered.event.costUsd,
-        total_cost_usd: registered.state.totalCostUsd,
-        tier: registered.state.tier,
-      },
+      sandbox: sandboxDetails,
     });
   });
 
@@ -1238,6 +1478,16 @@ export const createGraphRouter = (): Router => {
       typeof wabaId === "string" ? wabaId : undefined
     );
     if (storedTemplate) {
+      if (storedTemplate.status !== "APPROVED") {
+        return res.status(400).json({
+          error: "template_not_approved",
+          sandbox: {
+            template_id: storedTemplate.id,
+            status: storedTemplate.status,
+            rejection_reason: storedTemplate.rejectionReason ?? null,
+          },
+        });
+      }
       category = storedTemplate.category;
     }
 
@@ -1411,12 +1661,20 @@ export const createGraphRouter = (): Router => {
       order === "desc" ? b.updatedAt - a.updatedAt : a.updatedAt - b.updatedAt
     );
 
-    const { slice, paging, total } = paginateTemplates({
-      templates,
-      limit,
-      before,
-      after,
-    });
+    const paginationInput: {
+      templates: MessageTemplate[];
+      limit: number;
+      after?: string;
+      before?: string;
+    } = { templates, limit };
+    if (before) {
+      paginationInput.before = before;
+    }
+    if (after) {
+      paginationInput.after = after;
+    }
+
+    const { slice, paging, total } = paginateTemplates(paginationInput);
 
     return res.json({
       data: slice.map((tpl) => toGraphTemplate(tpl, fields)),
@@ -1460,18 +1718,42 @@ export const createGraphRouter = (): Router => {
     }
 
     try {
-      const tpl = createTemplate({
+      const normalizedRejectionReason =
+        normalizeTemplateRejectionReason(rejection_reason);
+      const templateInput: {
+        name: string;
+        languageCode: string;
+        category?: TemplateCategory;
+        components: TemplateComponent[];
+        bodyText: string;
+        headerText?: string;
+        footerText?: string;
+        wabaId: string;
+        status: ReturnType<typeof normalizeTemplateStatus>;
+        rejectionReason?: TemplateRejectionReason;
+      } = {
         name,
         languageCode: language,
-        category: category ? normalizeTemplateCategory(category) : undefined,
         components: sanitizedComponents,
         bodyText: extracted.bodyText,
-        headerText: extracted.headerText,
-        footerText: extracted.footerText,
         wabaId: id,
         status: normalizeTemplateStatus(status, "PENDING"),
-        rejectionReason: normalizeTemplateRejectionReason(rejection_reason),
-      });
+      };
+
+      if (category) {
+        templateInput.category = normalizeTemplateCategory(category);
+      }
+      if (extracted.headerText !== undefined) {
+        templateInput.headerText = extracted.headerText;
+      }
+      if (extracted.footerText !== undefined) {
+        templateInput.footerText = extracted.footerText;
+      }
+      if (normalizedRejectionReason !== undefined) {
+        templateInput.rejectionReason = normalizedRejectionReason;
+      }
+
+      const tpl = createTemplate(templateInput);
 
       return res.status(201).json({
         id: tpl.id,
@@ -1511,11 +1793,22 @@ export const createGraphRouter = (): Router => {
 
       const normalizedStatus = normalizeTemplateStatus(status, tpl.status);
       const rejectionReason = normalizeTemplateRejectionReason(rejection_reason);
-      const updated = updateTemplateStatus(templateId, normalizedStatus, {
-        rejectionReason,
-        rejectionNote:
-          typeof rejection_note === "string" ? rejection_note : undefined,
-      });
+      const statusOptions: {
+        rejectionReason?: TemplateRejectionReason;
+        rejectionNote?: string;
+      } = {};
+      if (rejectionReason !== undefined) {
+        statusOptions.rejectionReason = rejectionReason;
+      }
+      if (typeof rejection_note === "string") {
+        statusOptions.rejectionNote = rejection_note;
+      }
+
+      const updated = updateTemplateStatus(
+        templateId,
+        normalizedStatus,
+        statusOptions
+      );
 
       if (!updated) {
         return res.status(404).json({ error: "template_not_found" });

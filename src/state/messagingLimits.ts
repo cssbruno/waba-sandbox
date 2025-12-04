@@ -167,9 +167,36 @@ export const listMessagingSummaries = (): MessagingLimitSummary[] => {
   );
 };
 
+export const listSendEvents = (opts?: {
+  phoneId?: string;
+  since?: number;
+  until?: number;
+}): SendEvent[] => {
+  const since =
+    typeof opts?.since === "number" ? opts.since : Number.NEGATIVE_INFINITY;
+  const until =
+    typeof opts?.until === "number" ? opts.until : Number.POSITIVE_INFINITY;
+
+  const selectedStates = opts?.phoneId
+    ? (() => {
+        const state = states.get(opts.phoneId as string);
+        return state ? [state] : [];
+      })()
+    : Array.from(states.values());
+
+  const events: SendEvent[] = [];
+  for (const state of selectedStates) {
+    for (const event of state.sends) {
+      if (event.timestamp < since || event.timestamp > until) continue;
+      events.push({ ...event });
+    }
+  }
+
+  return events.sort((a, b) => b.timestamp - a.timestamp);
+};
+
 export const setMessagingTier = (phoneId: string, tier: MessagingLimitTier) => {
   const state = getOrCreateState(phoneId);
   state.tier = tier;
   states.set(phoneId, state);
 };
-

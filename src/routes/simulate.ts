@@ -113,6 +113,15 @@ interface SimulateInteractiveMediaCarouselBody extends SimulateMediaBaseBody {
   mediaIds: string[];
 }
 
+interface SimulateFlowCompleteBody extends SimulateMediaBaseBody {
+  flowToken?: string;
+  flowId?: string;
+  flowName?: string;
+  flowAction?: string;
+  flowActionPayload?: Record<string, unknown>;
+  flowCta?: string;
+}
+
 interface SimulateContextReplyBody extends SimulateMessageBody {
   contextMessageId: string;
 }
@@ -1223,6 +1232,90 @@ export const createSimulateRouter = (): Router => {
           targetUrl,
           forwardStatus: result.status,
           policy: evaluatePolicyForWaId(waId),
+        },
+      });
+
+      return res.status(200).json({
+        forwardedTo: targetUrl,
+        messageId,
+        payload,
+        forwardStatus: result.status,
+      });
+    }
+  );
+
+  router.post(
+    "/interactive/flow-completed",
+    async (req: Request, res: Response) => {
+      const {
+        from,
+        waId = from,
+        name = "Sandbox User",
+        phoneNumberId = "000000000000000",
+        displayPhoneNumber = "0000000000",
+        flowToken = "sandbox-flow-token",
+        flowId = "sandbox-flow-id",
+        flowName = "Sandbox Flow",
+        flowAction = "complete",
+        flowActionPayload = {},
+        flowCta = "Open",
+        wabaId,
+      } = req.body as SimulateFlowCompleteBody;
+
+      if (!from) {
+        return res.status(400).json({
+          error: "'from' is required",
+        });
+      }
+
+      const timestamp = Math.floor(Date.now() / 1000).toString();
+      const messageId = `wamid.SANDBOX-FLOW-${Date.now()}`;
+
+      const message: WabaInteractiveMessage = {
+        from,
+        id: messageId,
+        timestamp,
+        type: "interactive",
+        interactive: {
+          type: "flow",
+          flow_token: flowToken,
+          flow_id: flowId,
+          flow_name: flowName,
+          flow_action: flowAction,
+          flow_action_payload: flowActionPayload,
+          flow_cta: flowCta,
+          flow_status: "completed",
+        },
+      };
+
+      const payload = buildBasePayload(message, {
+        waId,
+        name,
+        phoneNumberId,
+        displayPhoneNumber,
+      });
+
+      const targetContext =
+        resolveWebhookTarget({
+          ...(phoneNumberId ? { phoneNumberId } : {}),
+          ...(wabaId ? { wabaId } : {}),
+        }) ?? null;
+      const targetUrl = targetContext?.url ?? requireTarget(res);
+      if (!targetUrl) return;
+
+      const forwarder = new WebhookForwarder(targetUrl);
+      const result = await forwarder.forward(payload);
+
+      addEvent({
+        direction: "outbound",
+        type: "simulate.message",
+        source: "simulate-interactive-flow",
+        payload,
+        meta: {
+          targetUrl,
+          forwardStatus: result.status,
+          policy: evaluatePolicyForWaId(waId),
+          resolvedSource: targetContext?.source ?? "app",
         },
       });
 

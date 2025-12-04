@@ -132,7 +132,8 @@ export interface WabaInteractiveMessage extends WabaMessageBase {
       | "list_reply"
       | "product_list"
       | "product"
-      | "media";
+      | "media"
+      | "flow";
     button_reply?: {
       id: string;
       title: string;
@@ -143,6 +144,13 @@ export interface WabaInteractiveMessage extends WabaMessageBase {
       description?: string;
     };
     // Product or media carousel replies and other metadata are left generic
+    flow_id?: string;
+    flow_token?: string;
+    flow_action?: string;
+    flow_action_payload?: Record<string, unknown>;
+    flow_cta?: string;
+    flow_status?: string;
+    flow_name?: string;
     [key: string]: unknown;
   };
 }

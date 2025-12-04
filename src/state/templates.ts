@@ -58,8 +58,8 @@ export interface TemplateComponent {
 
 export interface TemplateStatusAudit {
   status: TemplateStatus;
-  reason?: TemplateRejectionReason;
-  note?: string;
+  reason?: TemplateRejectionReason | undefined;
+  note?: string | undefined;
   updatedAt: number;
 }
 
@@ -68,9 +68,9 @@ export interface MessageTemplate {
   name: string;
   languageCode: string;
   category: TemplateCategory;
-  bodyText?: string;
-  headerText?: string;
-  footerText?: string;
+  bodyText?: string | undefined;
+  headerText?: string | undefined;
+  footerText?: string | undefined;
   components: TemplateComponent[];
   /**
    * Optional WABA ID this template belongs to, to simulate
@@ -79,8 +79,8 @@ export interface MessageTemplate {
   wabaId?: string;
   status: TemplateStatus;
   statusHistory: TemplateStatusAudit[];
-  rejectionReason?: TemplateRejectionReason;
-  rejectionNote?: string;
+  rejectionReason?: TemplateRejectionReason | undefined;
+  rejectionNote?: string | undefined;
   createdAt: number;
   updatedAt: number;
 }
@@ -231,13 +231,14 @@ const ensureTemplateShape = (tpl: MessageTemplate): MessageTemplate => {
   }
 
   if (!next.statusHistory || next.statusHistory.length === 0) {
-    next.statusHistory = [
-      {
-        status: next.status ?? "PENDING",
-        reason: next.rejectionReason,
-        updatedAt: next.updatedAt ?? Date.now(),
-      },
-    ];
+    const audit: TemplateStatusAudit = {
+      status: next.status ?? "PENDING",
+      updatedAt: next.updatedAt ?? Date.now(),
+    };
+    if (next.rejectionReason !== undefined) {
+      audit.reason = next.rejectionReason;
+    }
+    next.statusHistory = [audit];
   }
 
   if (!next.createdAt) {
@@ -317,6 +318,17 @@ export const createTemplate = (input: {
       ? input.rejectionReason ?? "POLICY"
       : input.rejectionReason;
 
+  const statusAudit: TemplateStatusAudit = {
+    status,
+    updatedAt: now,
+  };
+  if (rejectionReason !== undefined) {
+    statusAudit.reason = rejectionReason;
+  }
+  if (input.rejectionNote !== undefined) {
+    statusAudit.note = input.rejectionNote;
+  }
+
   const template: MessageTemplate = {
     id,
     name: input.name,
@@ -327,14 +339,7 @@ export const createTemplate = (input: {
     footerText: input.footerText ?? derivedText.footerText,
     components: derivedComponents,
     status,
-    statusHistory: [
-      {
-        status,
-        reason: rejectionReason,
-        note: input.rejectionNote,
-        updatedAt: now,
-      },
-    ],
+    statusHistory: [statusAudit],
     rejectionReason,
     rejectionNote: input.rejectionNote,
     createdAt: now,
@@ -399,19 +404,27 @@ export const updateTemplate = (
       normalized === "REJECTED"
         ? patch.rejectionReason ?? existing.rejectionReason ?? "POLICY"
         : patch.rejectionReason ?? existing.rejectionReason;
-    existing.rejectionReason = rejectionReason;
+    if (rejectionReason !== undefined) {
+      existing.rejectionReason = rejectionReason;
+    } else {
+      delete existing.rejectionReason;
+    }
     if (patch.rejectionNote !== null && patch.rejectionNote !== undefined) {
       existing.rejectionNote = patch.rejectionNote || undefined;
     }
-    existing.statusHistory = [
-      ...(existing.statusHistory ?? []),
-      {
-        status: normalized,
-        reason: rejectionReason,
-        note: patch.statusNote ?? patch.rejectionNote ?? existing.rejectionNote,
-        updatedAt: Date.now(),
-      },
-    ];
+    const historyNote =
+      patch.statusNote ?? patch.rejectionNote ?? existing.rejectionNote;
+    const historyEntry: TemplateStatusAudit = {
+      status: normalized,
+      updatedAt: Date.now(),
+    };
+    if (rejectionReason !== undefined) {
+      historyEntry.reason = rejectionReason;
+    }
+    if (historyNote !== undefined) {
+      historyEntry.note = historyNote;
+    }
+    existing.statusHistory = [...(existing.statusHistory ?? []), historyEntry];
   }
   if (patch.wabaId === null) {
     delete existing.wabaId;
@@ -454,13 +467,24 @@ export const updateTemplateStatus = (
     rejectionReason?: TemplateRejectionReason;
     rejectionNote?: string;
   }
-): MessageTemplate | undefined =>
-  updateTemplate(id, {
-    status,
-    rejectionReason: opts?.rejectionReason,
-    rejectionNote: opts?.rejectionNote ?? null,
-    statusNote: opts?.rejectionNote ?? null,
-  });
+): MessageTemplate | undefined => {
+  const patch: Partial<{
+    status: TemplateStatus;
+    rejectionReason: TemplateRejectionReason | null;
+    rejectionNote: string | null;
+    statusNote: string | null;
+  }> = { status };
+
+  if (opts?.rejectionReason !== undefined) {
+    patch.rejectionReason = opts.rejectionReason;
+  }
+  if (opts?.rejectionNote !== undefined) {
+    patch.rejectionNote = opts.rejectionNote;
+    patch.statusNote = opts.rejectionNote;
+  }
+
+  return updateTemplate(id, patch);
+};
 
 export const deleteTemplate = (id: string): boolean =>
   templates.delete(id);
