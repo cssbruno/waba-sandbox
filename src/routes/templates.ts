@@ -35,6 +35,7 @@ export const createTemplatesRouter = (): Router => {
       bodyText,
       headerText,
       footerText,
+      status: "APPROVED",
     });
 
     return res.status(201).json(tpl);

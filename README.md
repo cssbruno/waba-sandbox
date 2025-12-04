@@ -41,12 +41,20 @@ observe traffic in real time.
   - Runtime registry of contact policies (`allowed` / `blocked` / `unknown`).
   - Every simulated outbound event is annotated with a policy evaluation so you
     can see whether sending to that contact would be compliant.
+- Marketing Messages simulation:
+  - Opt-in/opt-out registry for marketing sends.
+  - Graph-style `/<API_VERSION>/<PHONE_ID>/marketing_messages` endpoint that
+    enforces marketing opt-in, a frequency cap, and regular messaging limits.
+  - Local API to manage marketing contacts, config, and conversion events.
 - Static media served under `/media` for real downloads used in simulations:
   - `/media/sample-image.png`
   - `/media/sample-document.pdf`
   - `/media/sample-audio.ogg`
   - `/media/sample-video.mp4`
   - `/media/sample-sticker.webp`
+- Basic Graph-style business profile API for a phone number:
+  - `GET /vXX.X/<PHONE_ID>/whatsapp_business_profile`
+  - `POST /vXX.X/<PHONE_ID>/whatsapp_business_profile`
 - Web console at `/`:
   - Configure sandbox at runtime (webhook URL, verify token, auth/JWT).
   - Manage a client auth token used by the UI for all API calls.
@@ -105,6 +113,13 @@ observe traffic in real time.
 - `GET /api/events` / `GET /api/events/stream`  
   JSON list of recent events and a Server-Sent Events stream used by the web
   console.
+
+- `GET /api/marketing/contacts` / `PUT /api/marketing/contacts/:waId` /  
+  `GET /api/marketing/eligibility/:waId` / `GET|PUT /api/marketing/config` /  
+  `GET /api/marketing/sends` / `GET|POST /api/marketing/conversions`  
+  Manage marketing opt-in status, view frequency cap settings, list marketing
+  sends, and record conversion events. Useful when simulating WhatsApp
+  Marketing Messages opt-in and measurement flows.
 
 - `GET /api/policy/contacts` / `PUT /api/policy/contacts/:waId` /
   `GET /api/policy/evaluate/:waId`  

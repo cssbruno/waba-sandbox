@@ -4,34 +4,263 @@ export type TemplateCategory =
   | "AUTHENTICATION"
   | "UNKNOWN";
 
-export type TemplateStatus = "APPROVED" | "PENDING" | "REJECTED";
+export type TemplateStatus =
+  | "APPROVED"
+  | "PENDING"
+  | "REJECTED"
+  | "IN_APPEAL"
+  | "DISABLED"
+  | "PAUSED";
+
+export type TemplateRejectionReason =
+  | "POLICY"
+  | "SPAM"
+  | "TRADEMARK"
+  | "INCORRECT_FORMAT"
+  | "PROHIBITED_CONTENT"
+  | "OTHER";
+
+export type TemplateButtonType =
+  | "QUICK_REPLY"
+  | "URL"
+  | "PHONE_NUMBER"
+  | "COPY_CODE";
+
+export interface TemplateButton {
+  type: TemplateButtonType;
+  text: string;
+  url?: string;
+  phone_number?: string;
+  example?: string[];
+}
+
+export interface TemplateComponentExample {
+  header_text?: string[];
+  body_text?: Array<string> | Array<Array<string>>;
+  footer_text?: string[];
+  button_text?: Array<Array<string>>;
+  [key: string]: unknown;
+}
+
+export type TemplateComponentType =
+  | "HEADER"
+  | "BODY"
+  | "FOOTER"
+  | "BUTTONS";
+
+export interface TemplateComponent {
+  type: TemplateComponentType;
+  format?: string;
+  text?: string;
+  example?: TemplateComponentExample;
+  buttons?: TemplateButton[];
+}
+
+export interface TemplateStatusAudit {
+  status: TemplateStatus;
+  reason?: TemplateRejectionReason;
+  note?: string;
+  updatedAt: number;
+}
 
 export interface MessageTemplate {
   id: string;
   name: string;
   languageCode: string;
   category: TemplateCategory;
-  bodyText: string;
+  bodyText?: string;
   headerText?: string;
   footerText?: string;
+  components: TemplateComponent[];
   /**
    * Optional WABA ID this template belongs to, to simulate
    * /<WABA_ID>/message_templates semantics.
    */
   wabaId?: string;
   status: TemplateStatus;
+  statusHistory: TemplateStatusAudit[];
+  rejectionReason?: TemplateRejectionReason;
+  rejectionNote?: string;
   createdAt: number;
   updatedAt: number;
 }
 
+export const normalizeTemplateCategory = (
+  category: unknown
+): TemplateCategory => {
+  if (typeof category !== "string") {
+    return "UNKNOWN";
+  }
+
+  const upper = category.toUpperCase();
+  if (upper === "MARKETING" || upper === "UTILITY" || upper === "AUTHENTICATION") {
+    return upper;
+  }
+
+  if (upper === "UNKNOWN") {
+    return "UNKNOWN";
+  }
+
+  return "UNKNOWN";
+};
+
+export const normalizeTemplateStatus = (
+  status: unknown,
+  defaultStatus: TemplateStatus = "PENDING"
+): TemplateStatus => {
+  if (typeof status !== "string") {
+    return defaultStatus;
+  }
+  const upper = status.toUpperCase();
+  if (
+    upper === "APPROVED" ||
+    upper === "PENDING" ||
+    upper === "REJECTED" ||
+    upper === "IN_APPEAL" ||
+    upper === "DISABLED" ||
+    upper === "PAUSED"
+  ) {
+    return upper;
+  }
+  return defaultStatus;
+};
+
+export const normalizeTemplateRejectionReason = (
+  reason: unknown
+): TemplateRejectionReason | undefined => {
+  if (typeof reason !== "string") return undefined;
+  const upper = reason.toUpperCase();
+  if (
+    upper === "POLICY" ||
+    upper === "SPAM" ||
+    upper === "TRADEMARK" ||
+    upper === "INCORRECT_FORMAT" ||
+    upper === "PROHIBITED_CONTENT" ||
+    upper === "OTHER"
+  ) {
+    return upper;
+  }
+  return "OTHER";
+};
+
 const templates = new Map<string, MessageTemplate>();
 
+const buildComponentsFromText = (
+  bodyText?: string,
+  headerText?: string,
+  footerText?: string
+): TemplateComponent[] => {
+  const components: TemplateComponent[] = [];
+  if (headerText) {
+    components.push({
+      type: "HEADER",
+      format: "TEXT",
+      text: headerText,
+    });
+  }
+  if (bodyText) {
+    components.push({
+      type: "BODY",
+      text: bodyText,
+    });
+  }
+  if (footerText) {
+    components.push({
+      type: "FOOTER",
+      text: footerText,
+    });
+  }
+  return components;
+};
+
+const deriveTextFromComponents = (
+  components?: TemplateComponent[]
+): {
+  headerText?: string;
+  bodyText?: string;
+  footerText?: string;
+} => {
+  const result: {
+    headerText?: string;
+    bodyText?: string;
+    footerText?: string;
+  } = {};
+  if (!components) return result;
+
+  for (const component of components) {
+    if (component.type === "HEADER" && component.text && !result.headerText) {
+      result.headerText = component.text;
+    } else if (
+      component.type === "BODY" &&
+      component.text &&
+      !result.bodyText
+    ) {
+      result.bodyText = component.text;
+    } else if (
+      component.type === "FOOTER" &&
+      component.text &&
+      !result.footerText
+    ) {
+      result.footerText = component.text;
+    }
+  }
+
+  return result;
+};
+
+const ensureTemplateShape = (tpl: MessageTemplate): MessageTemplate => {
+  const next = tpl;
+
+  if (!Array.isArray(next.components) || next.components.length === 0) {
+    next.components = buildComponentsFromText(
+      next.bodyText,
+      next.headerText,
+      next.footerText
+    );
+  }
+
+  const derived = deriveTextFromComponents(next.components);
+  if (!next.bodyText && derived.bodyText) {
+    next.bodyText = derived.bodyText;
+  }
+  if (!next.headerText && derived.headerText) {
+    next.headerText = derived.headerText;
+  }
+  if (!next.footerText && derived.footerText) {
+    next.footerText = derived.footerText;
+  }
+
+  if (!next.statusHistory || next.statusHistory.length === 0) {
+    next.statusHistory = [
+      {
+        status: next.status ?? "PENDING",
+        reason: next.rejectionReason,
+        updatedAt: next.updatedAt ?? Date.now(),
+      },
+    ];
+  }
+
+  if (!next.createdAt) {
+    next.createdAt = Date.now();
+  }
+  if (!next.updatedAt) {
+    next.updatedAt = next.createdAt;
+  }
+
+  templates.set(next.id, next);
+  return next;
+};
+
 export const listTemplates = (): MessageTemplate[] =>
-  Array.from(templates.values());
+  Array.from(templates.values()).map(ensureTemplateShape);
 
 export const getTemplateById = (
   id: string
-): MessageTemplate | undefined => templates.get(id);
+): MessageTemplate | undefined => {
+  const tpl = templates.get(id);
+  if (!tpl) return undefined;
+  return ensureTemplateShape(tpl);
+};
 
 export const getTemplateByName = (
   name: string,
@@ -58,33 +287,60 @@ export const createTemplate = (input: {
   name: string;
   languageCode: string;
   category?: TemplateCategory;
-  bodyText: string;
+  bodyText?: string;
   headerText?: string;
   footerText?: string;
+  components?: TemplateComponent[];
   wabaId?: string;
   status?: TemplateStatus;
+  rejectionReason?: TemplateRejectionReason;
+  rejectionNote?: string;
 }): MessageTemplate => {
   const id = `tpl_${Date.now()}_${Math.random()
     .toString(36)
     .slice(2, 8)}`;
+  const status = normalizeTemplateStatus(input.status);
   const now = Date.now();
+
+  const derivedComponents =
+    input.components ??
+    buildComponentsFromText(input.bodyText, input.headerText, input.footerText);
+  const derivedText = deriveTextFromComponents(derivedComponents);
+  const bodyText = input.bodyText ?? derivedText.bodyText;
+
+  if (!bodyText) {
+    throw new Error("body_text_required");
+  }
+
+  const rejectionReason =
+    status === "REJECTED"
+      ? input.rejectionReason ?? "POLICY"
+      : input.rejectionReason;
+
   const template: MessageTemplate = {
     id,
     name: input.name,
     languageCode: input.languageCode,
     category: input.category ?? "UNKNOWN",
-    bodyText: input.bodyText,
-    status: input.status ?? "APPROVED",
+    bodyText,
+    headerText: input.headerText ?? derivedText.headerText,
+    footerText: input.footerText ?? derivedText.footerText,
+    components: derivedComponents,
+    status,
+    statusHistory: [
+      {
+        status,
+        reason: rejectionReason,
+        note: input.rejectionNote,
+        updatedAt: now,
+      },
+    ],
+    rejectionReason,
+    rejectionNote: input.rejectionNote,
     createdAt: now,
     updatedAt: now,
   };
 
-  if (input.headerText !== undefined) {
-    template.headerText = input.headerText;
-  }
-  if (input.footerText !== undefined) {
-    template.footerText = input.footerText;
-  }
   if (input.wabaId !== undefined) {
     template.wabaId = input.wabaId;
   }
@@ -104,10 +360,15 @@ export const updateTemplate = (
     footerText: string | null;
     wabaId: string | null;
     status: TemplateStatus;
+    components: TemplateComponent[];
+    rejectionReason: TemplateRejectionReason | null;
+    rejectionNote: string | null;
+    statusNote: string | null;
   }>
 ): MessageTemplate | undefined => {
   const existing = templates.get(id);
   if (!existing) return undefined;
+  ensureTemplateShape(existing);
 
   if (typeof patch.name === "string") {
     existing.name = patch.name;
@@ -132,18 +393,74 @@ export const updateTemplate = (
     existing.footerText = patch.footerText;
   }
   if (patch.status) {
-    existing.status = patch.status;
+    const normalized = normalizeTemplateStatus(patch.status, existing.status);
+    existing.status = normalized;
+    const rejectionReason =
+      normalized === "REJECTED"
+        ? patch.rejectionReason ?? existing.rejectionReason ?? "POLICY"
+        : patch.rejectionReason ?? existing.rejectionReason;
+    existing.rejectionReason = rejectionReason;
+    if (patch.rejectionNote !== null && patch.rejectionNote !== undefined) {
+      existing.rejectionNote = patch.rejectionNote || undefined;
+    }
+    existing.statusHistory = [
+      ...(existing.statusHistory ?? []),
+      {
+        status: normalized,
+        reason: rejectionReason,
+        note: patch.statusNote ?? patch.rejectionNote ?? existing.rejectionNote,
+        updatedAt: Date.now(),
+      },
+    ];
   }
   if (patch.wabaId === null) {
     delete existing.wabaId;
   } else if (typeof patch.wabaId === "string") {
     existing.wabaId = patch.wabaId;
   }
+  if (Array.isArray(patch.components)) {
+    existing.components = patch.components;
+    const derived = deriveTextFromComponents(patch.components);
+    if (derived.bodyText) {
+      existing.bodyText = derived.bodyText;
+    }
+    if (derived.headerText) {
+      existing.headerText = derived.headerText;
+    }
+    if (derived.footerText) {
+      existing.footerText = derived.footerText;
+    }
+  }
+  if (patch.rejectionReason === null) {
+    delete existing.rejectionReason;
+  } else if (patch.rejectionReason) {
+    existing.rejectionReason = patch.rejectionReason;
+  }
+  if (patch.rejectionNote === null) {
+    delete existing.rejectionNote;
+  } else if (typeof patch.rejectionNote === "string") {
+    existing.rejectionNote = patch.rejectionNote;
+  }
 
   existing.updatedAt = Date.now();
   templates.set(id, existing);
   return existing;
 };
+
+export const updateTemplateStatus = (
+  id: string,
+  status: TemplateStatus,
+  opts?: {
+    rejectionReason?: TemplateRejectionReason;
+    rejectionNote?: string;
+  }
+): MessageTemplate | undefined =>
+  updateTemplate(id, {
+    status,
+    rejectionReason: opts?.rejectionReason,
+    rejectionNote: opts?.rejectionNote ?? null,
+    statusNote: opts?.rejectionNote ?? null,
+  });
 
 export const deleteTemplate = (id: string): boolean =>
   templates.delete(id);
