@@ -13,6 +13,7 @@ export interface RuntimeConfig {
   verifyToken: string;
   targetWebhookUrl: string | null;
   auth: AuthConfig;
+  webhookAppSecret?: string | null;
 }
 
 const runtimeConfig: RuntimeConfig = {
@@ -24,6 +25,7 @@ const runtimeConfig: RuntimeConfig = {
     jwtIssuer: "waba-sandbox",
     jwtAudience: "sandbox-client",
   },
+  webhookAppSecret: process.env.WHATSAPP_APP_SECRET ?? null,
 };
 
 export const getConfig = (): RuntimeConfig => runtimeConfig;
@@ -38,6 +40,13 @@ export const updateConfig = (patch: Partial<RuntimeConfig>): RuntimeConfig => {
     patch.targetWebhookUrl === null
   ) {
     runtimeConfig.targetWebhookUrl = patch.targetWebhookUrl;
+  }
+
+  if (
+    patch.webhookAppSecret === null ||
+    typeof patch.webhookAppSecret === "string"
+  ) {
+    runtimeConfig.webhookAppSecret = patch.webhookAppSecret;
   }
 
   if (patch.auth && typeof patch.auth === "object") {
@@ -58,4 +67,3 @@ export const updateConfig = (patch: Partial<RuntimeConfig>): RuntimeConfig => {
 
   return runtimeConfig;
 };
-

@@ -13,6 +13,7 @@ import { createPhoneNumbersRouter } from "./routes/phoneNumbers";
 import { createTemplatesRouter } from "./routes/templates";
 import { createGraphRouter } from "./routes/graph";
 import { createMarketingRouter } from "./routes/marketing";
+import { createMediaRouter } from "./routes/media";
 import { requireSandboxAuth } from "./middleware/auth";
 
 const app = express();
@@ -37,6 +38,7 @@ app.use("/api/policy", requireSandboxAuth, createPolicyRouter());
 app.use("/api/marketing", requireSandboxAuth, createMarketingRouter());
 app.use("/api/templates", requireSandboxAuth, createTemplatesRouter());
 app.use("/api/phone-numbers", requireSandboxAuth, createPhoneNumbersRouter());
+app.use("/api/media", requireSandboxAuth, createMediaRouter());
 
 // Health
 app.get("/health", (_req, res) => {

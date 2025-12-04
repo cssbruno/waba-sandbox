@@ -235,6 +235,7 @@ export interface ResolvedWebhookTarget {
   source: "phone" | "waba" | "app";
   phoneId?: string;
   wabaId?: string;
+  appSecret?: string;
 }
 
 export const resolveWebhookTarget = (opts: {
@@ -287,6 +288,7 @@ export const resolveWebhookTarget = (opts: {
     return {
       url: config.targetWebhookUrl,
       source: "app",
+      appSecret: config.webhookAppSecret || undefined,
     };
   }
 

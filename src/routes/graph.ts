@@ -610,6 +610,15 @@ export const createGraphRouter = (): Router => {
       normalizedRegion = upper;
     }
 
+    // Ensure the phone exists in state so registration works even if
+    // it wasn't created via /api/phone-numbers beforehand.
+    if (!getPhoneNumber(id)) {
+      upsertPhoneNumber({
+        id,
+        displayPhoneNumber: id,
+      });
+    }
+
     const registerParams: {
       id: string;
       pin: string;

@@ -202,7 +202,8 @@ export const createSimulateRouter = (): Router => {
       phoneNumberId = "000000000000000",
       displayPhoneNumber = "0000000000",
       wabaId,
-    } = req.body as SimulateMessageBody;
+      webhookAppSecret,
+    } = req.body as SimulateMessageBody & { webhookAppSecret?: string };
 
     if (!from || !body) {
       return res
@@ -239,7 +240,9 @@ export const createSimulateRouter = (): Router => {
     if (!targetUrl) return;
 
     const forwarder = new WebhookForwarder(targetUrl);
-    const result = await forwarder.forward(payload);
+    const result = await forwarder.forward(payload, {
+      appSecret: webhookAppSecret || targetContext?.appSecret || undefined,
+    });
 
     addEvent({
       direction: "outbound",
@@ -263,8 +266,14 @@ export const createSimulateRouter = (): Router => {
   });
 
   router.post("/status", async (req: Request, res: Response) => {
-    const { messageId, recipientId, status, phoneNumberId, wabaId } =
-      req.body as SimulateStatusBody;
+    const {
+      messageId,
+      recipientId,
+      status,
+      phoneNumberId,
+      wabaId,
+      webhookAppSecret,
+    } = req.body as SimulateStatusBody & { webhookAppSecret?: string };
 
     if (!messageId || !recipientId || !status) {
       return res.status(400).json({
@@ -312,7 +321,9 @@ export const createSimulateRouter = (): Router => {
     if (!targetUrl) return;
 
     const forwarder = new WebhookForwarder(targetUrl);
-    const result = await forwarder.forward(payload);
+    const result = await forwarder.forward(payload, {
+      appSecret: webhookAppSecret || undefined,
+    });
 
     addEvent({
       direction: "outbound",
