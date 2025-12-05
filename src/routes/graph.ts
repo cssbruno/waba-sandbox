@@ -50,6 +50,7 @@ import {
   upsertBusinessProfile,
 } from "../state/businessProfile";
 import { evaluatePolicyForWaId } from "../state/policy";
+import { addEvent } from "../state/eventStore";
 
 export const createGraphRouter = (): Router => {
   const router = Router({ mergeParams: true });
@@ -1351,6 +1352,25 @@ export const createGraphRouter = (): Router => {
           (flowInteractive as any).flow_action_payload ?? null,
       };
     }
+
+    addEvent({
+      direction: "outbound",
+      type: "graph.message",
+      source: "graph-messages",
+      payload: {
+        phone_id: id,
+        to,
+        type,
+        template,
+        interactive,
+        category,
+        messaging_limit: {
+          tier: registered.state.tier,
+          unique_recipients_in_window:
+            registered.state.uniqueRecipientsInWindow,
+        },
+      },
+    });
 
     // Graph API success shape for /messages
     return res.status(200).json({

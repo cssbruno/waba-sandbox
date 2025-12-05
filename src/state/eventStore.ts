@@ -4,7 +4,8 @@ export type EventType =
   | "webhook.incoming"
   | "simulate.message"
   | "simulate.status"
-  | "config.update";
+  | "config.update"
+  | "graph.message";
 
 export interface SandboxEvent {
   id: string;
@@ -56,4 +57,3 @@ export const subscribe = (subscriber: Subscriber): (() => void) => {
     subscribers.delete(subscriber);
   };
 };
-
