@@ -1023,6 +1023,11 @@ function TrafficSidebar({ events, statusText, showJson, setShowJson }) {
               type = msg.type;
               summary = msg.text?.body || `[${msg.type}]`;
             }
+          } else if (evt.type === "graph.message") {
+            const sender = payload.sender || "client";
+            const to = payload.to ? ` → ${payload.to}` : "";
+            summary = `Graph /messages from ${sender}${to}`;
+            type = payload.type || type;
           }
           const directionClass = evt.direction || "system";
           return (

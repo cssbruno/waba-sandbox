@@ -1354,7 +1354,7 @@ export const createGraphRouter = (): Router => {
     }
 
     addEvent({
-      direction: "outbound",
+      direction: "inbound",
       type: "graph.message",
       source: "graph-messages",
       payload: {
@@ -1364,6 +1364,12 @@ export const createGraphRouter = (): Router => {
         template,
         interactive,
         category,
+        sender: req.ip || "unknown",
+        user_agent:
+          typeof req.headers["user-agent"] === "string"
+            ? req.headers["user-agent"]
+            : undefined,
+        request_body: body,
         messaging_limit: {
           tier: registered.state.tier,
           unique_recipients_in_window:

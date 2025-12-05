@@ -1,10 +1,11 @@
-# WABA Sandbox
+# WABA Sandbox – WhatsApp Business Cloud API Webhook Simulator
 
-Local WhatsApp Business (Cloud API) webhook sandbox. It exposes a webhook
-endpoint compatible with Meta's format and lets you push simulated inbound
-messages (text, media, interactive, template) and status updates to your own
-application. A small web console lets you configure everything at runtime and
-observe traffic in real time.
+Local WhatsApp Business Cloud API sandbox for end-to-end webhook testing and
+debugging. It mirrors Meta’s webhook shape, verifies `hub.verify_token`, signs
+payloads with `X-Hub-Signature-256`, and lets you simulate inbound messages
+(text, media, interactive, templates) plus status updates to your app. A
+built-in web console configures everything at runtime and shows live traffic for
+fast debugging.
 
 ## Features
 
@@ -14,6 +15,8 @@ observe traffic in real time.
 - `GET /webhook` – verification endpoint using the configured verify token.
 - `POST /webhook` – receives webhooks (for debugging what your app sends) and
   always logs them to the console and live event stream.
+- `POST /vXX.X/<PHONE_ID>/messages` – Graph-style send endpoint to mock outbound
+  sends; enforces messaging limits and emits inbound events to the live stream.
 - Simulation endpoints that forward WhatsApp-style webhooks to your app,
   covering most Cloud API message categories:
   - Text
@@ -112,7 +115,12 @@ observe traffic in real time.
 
 - `GET /api/events` / `GET /api/events/stream`  
   JSON list of recent events and a Server-Sent Events stream used by the web
-  console.
+  console.  
+  - `direction: inbound` → calls hitting the sandbox (e.g., your app posting to `/webhook` or `/vXX.X/<PHONE_ID>/messages`).  
+  - `direction: outbound` → sandbox forwarding/simulations sent to your app (e.g., `/simulate/*`).  
+  The “Live Traffic” panel shows these with INBOUND/OUTBOUND tags plus payloads,
+  including sender IP/user-agent for inbound Graph `/messages` calls so you can
+  see who sent what.
 
 - `GET /api/marketing/contacts` / `PUT /api/marketing/contacts/:waId` /  
   `GET /api/marketing/eligibility/:waId` / `GET|PUT /api/marketing/config` /  
