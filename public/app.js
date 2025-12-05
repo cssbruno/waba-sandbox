@@ -64,40 +64,6 @@ function createApi(token) {
   };
 }
 
-// Shape an inbound WABA-style webhook payload on the client,
-// mirroring what the server-side simulator builds.
-function buildBasePayloadClient(message, opts) {
-  return {
-    object: "whatsapp_business_account",
-    entry: [
-      {
-        // Use a realistic-looking WhatsApp Business Account id
-        // (your app should not hard-code this value).
-        id: "WHATSAPP_BUSINESS_ACCOUNT_ID",
-        changes: [
-          {
-            field: "messages",
-            value: {
-              messaging_product: "whatsapp",
-              metadata: {
-                display_phone_number: opts.displayPhoneNumber,
-                phone_number_id: opts.phoneNumberId,
-              },
-              contacts: [
-                {
-                  profile: { name: opts.name },
-                  wa_id: opts.waId,
-                },
-              ],
-              messages: [message],
-            },
-          },
-        ],
-      },
-    ],
-  };
-}
-
 // --- React components ---
 
 function Sidebar({ activeTab, onTabChange }) {
@@ -185,175 +151,90 @@ function SimulateTab({
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!from) {
-      showToast("'From' phone is required", "error");
-      return;
-    }
-    if (!config || !config.targetWebhookUrl) {
-      showToast(
-        "Set Target Webhook URL in Settings before sending",
-        "error"
-      );
+    // Only require client token if auth mode is JWT
+    if (config?.auth?.mode === "jwt" && !authTokenPresent) {
+      showToast("Set a client token in Settings first", "error");
       return;
     }
     setSubmitting(true);
     try {
-      const targetUrl = config.targetWebhookUrl;
-      const timestamp = Math.floor(Date.now() / 1000).toString();
-
-      // derive basic metadata similar to the server-side simulator
-      let selectedPhone = null;
-      if (phones && phones.length > 0) {
-        selectedPhone =
-          phones.find((p) => p.id === selectedPhoneId) || phones[0];
-      }
-      const phoneNumberId =
-        (selectedPhone && selectedPhone.id) || "000000000000000";
-      const displayPhoneNumber =
-        (selectedPhone && selectedPhone.displayPhoneNumber) ||
-        "0000000000";
-      const waId = from;
-      const name = "Sandbox User";
-
+      const endpoint =
+        simType === "text"
+          ? "/simulate/message"
+          : `/simulate/${simType}`;
       let payload;
 
-      // Status updates have a slightly different payload shape
+      // Status updates – match /simulate/status payload
       if (simType === "status") {
         payload = {
-          object: "whatsapp_business_account",
-          entry: [
-            {
-              id: "sandbox-whatsapp-business-account",
-              changes: [
-                {
-                  field: "messages",
-                  value: {
-                    messaging_product: "whatsapp",
-                    metadata: {
-                      display_phone_number: displayPhoneNumber,
-                      phone_number_id: phoneNumberId,
-                    },
-                    statuses: [
-                      {
-                        id: statusMessageId,
-                        status: statusStatus,
-                        timestamp,
-                        recipient_id: statusRecipientId,
-                      },
-                    ],
-                  },
-                },
-              ],
-            },
-          ],
+          messageId: statusMessageId,
+          recipientId: statusRecipientId,
+          status: statusStatus,
         };
       } else {
-        const base = {
+        // Message types – match /simulate/<type> payloads
+        // find phone id from selection or by matching display phone number
+        let phoneId = selectedPhoneId || null;
+        let displayPhoneNumber = from;
+
+        // Try to resolve a registered phone for metadata
+        let selectedPhone = null;
+        if (!phoneId && from) {
+          const match = phones.find(
+            (p) => p.displayPhoneNumber === from
+          );
+          if (match) {
+            phoneId = match.id;
+            selectedPhone = match;
+          }
+        }
+        if (!selectedPhone && phoneId) {
+          selectedPhone = phones.find((p) => p.id === phoneId) || null;
+        }
+        if (selectedPhone && selectedPhone.displayPhoneNumber) {
+          displayPhoneNumber = selectedPhone.displayPhoneNumber;
+        }
+
+        payload = {
           from,
-          id: "",
-          timestamp,
+          phoneNumberId: phoneId || undefined,
+          displayPhoneNumber,
         };
 
         if (simType === "text") {
-          const messageId = `wamid.SANDBOX-TEXT-${Date.now()}`;
-          const message = {
-            ...base,
-            id: messageId,
-            type: "text",
-            text: { body },
-          };
-          payload = buildBasePayloadClient(message, {
-            waId,
-            name,
-            phoneNumberId,
-            displayPhoneNumber,
-          });
-        } else if (simType === "image") {
-          const messageId = `wamid.SANDBOX-IMAGE-${Date.now()}`;
-          const url = mediaUrl || getDefaultMedia("image");
-          const message = {
-            ...base,
-            id: messageId,
-            type: "image",
-            image: {
-              caption: caption || "Sample image from sandbox",
-              mime_type: "image/png",
-              link: url,
-            },
-          };
-          payload = buildBasePayloadClient(message, {
-            waId,
-            name,
-            phoneNumberId,
-            displayPhoneNumber,
-          });
-        } else if (simType === "document") {
-          const messageId = `wamid.SANDBOX-DOC-${Date.now()}`;
-          const url = mediaUrl || getDefaultMedia("document");
-          const message = {
-            ...base,
-            id: messageId,
-            type: "document",
-            document: {
-              filename: filename || "sample-document.pdf",
-              caption: caption || "Sample document from sandbox",
-              mime_type: "application/pdf",
-              link: url,
-            },
-          };
-          payload = buildBasePayloadClient(message, {
-            waId,
-            name,
-            phoneNumberId,
-            displayPhoneNumber,
-          });
-        } else if (simType === "audio") {
-          const messageId = `wamid.SANDBOX-AUDIO-${Date.now()}`;
-          const url = mediaUrl || getDefaultMedia("audio");
-          const message = {
-            ...base,
-            id: messageId,
-            type: "audio",
-            audio: {
-              mime_type: "audio/ogg",
-              voice,
-              link: url,
-            },
-          };
-          payload = buildBasePayloadClient(message, {
-            waId,
-            name,
-            phoneNumberId,
-            displayPhoneNumber,
-          });
-        } else {
-          showToast(`Unsupported type: ${simType}`, "error");
-          return;
+          payload.body = body;
+        } else if (["image", "document", "audio"].includes(simType)) {
+          payload.mediaUrl = mediaUrl || getDefaultMedia(simType);
+          if (simType !== "audio") payload.caption = caption;
+          if (simType === "document") payload.filename = filename;
+          if (simType === "audio") payload.voice = voice;
         }
       }
 
-      const res = await fetch(targetUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
-
+      const res = await api.post(endpoint, payload);
       if (res.ok) {
-        const label =
-          simType.charAt(0).toUpperCase() + simType.slice(1);
-        showToast(
-          simType === "status"
-            ? "Status sent directly to webhook!"
-            : `${label} message sent directly to webhook!`,
-          "success"
-        );
+        const fwdStatus = res.data && res.data.forwardStatus;
+        if (fwdStatus && (fwdStatus < 200 || fwdStatus >= 300)) {
+          showToast(
+            `Simulated OK, but webhook failed (Status ${fwdStatus})`,
+            "error"
+          );
+        } else {
+          const label =
+            simType.charAt(0).toUpperCase() + simType.slice(1);
+          showToast(
+            simType === "status"
+              ? "Status sent!"
+              : `${label} message sent!`,
+            "success"
+          );
+        }
       } else {
-        showToast(
-          `Webhook call failed (HTTP ${res.status})`,
-          "error"
-        );
+        const msg =
+          res.data && res.data.error
+            ? res.data.error
+            : "Unknown error";
+        showToast(`Failed: ${msg}`, "error");
       }
     } finally {
       setSubmitting(false);
